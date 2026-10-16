@@ -1,0 +1,155 @@
+diff --git a/docs/index.html b/docs/index.html
+index a32c69f..5eb2780 100755
+--- a/docs/index.html
++++ b/docs/index.html
+@@ -3,6 +3,8 @@
+ <head>
+     <meta charset="UTF-8">
+     <meta name="viewport" content="width=device-width, initial-scale=1.0">
++    <meta http-equiv="Cache-Control" content="no-store, must-revalidate">
++    <meta http-equiv="Pragma" content="no-cache">
+     <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><text y='28' font-size='28'>⚡</text></svg>">
+     <title>T3MP3ST - Command & Control Dashboard</title>
+     <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+@@ -6139,7 +6141,7 @@ tempest.operators.<span class="function">spawn</span>(<span class="string">'scan
+             baseUrl: localStorage.getItem('t3mp3st_api_url') ||
+                 (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
+                     ? `http://${window.location.hostname}:3333`
+-                    : ''),  // Empty = standalone mode on remote hosts
++                    : window.location.origin),  // Served remotely (tunnel/proxy) → hit the SAME-origin backend
+ 
+             connected: false,
+             llmAvailable: false,
+@@ -6171,7 +6173,7 @@ tempest.operators.<span class="function">spawn</span>(<span class="string">'scan
+ 
+                 try {
+                     const controller = new AbortController();
+-                    const timeout = setTimeout(() => controller.abort(), 5000);
++                    const timeout = setTimeout(() => controller.abort(), 8000);
+                     const res = await fetch(`${this.baseUrl}/api/health`, { signal: controller.signal });
+                     clearTimeout(timeout);
+                     const data = await res.json();
+@@ -6210,10 +6212,11 @@ tempest.operators.<span class="function">spawn</span>(<span class="string">'scan
+                     this.connected = false;
+                     this.llmAvailable = false;
+ 
+-                    // If on a remote host and first check fails, switch to standalone
++                    // Remote host: one failure is NOT fatal — the same-origin backend
++                    // (tunnel / just-booted server) may simply be cold. Keep baseUrl so
++                    // the periodic health poll can connect once it's reachable, and retry.
+                     if (!this._isLocal && !this._hasCustomUrl) {
+-                        this._isStandalone = true;
+-                        this.baseUrl = '';
++                        this._isStandalone = false;
+                         if (dot && text) {
+                             dot.className = 'api-dot';
+                             dot.style.background = '#ffaa00';
+@@ -6221,11 +6224,12 @@ tempest.operators.<span class="function">spawn</span>(<span class="string">'scan
+                             dot.style.animation = 'none';
+                             text.className = 'api-text';
+                             text.style.color = '#ffaa00';
+-                            text.textContent = 'Standalone Mode';
++                            text.textContent = 'Connecting…';
+                         }
+-                        const standalone = { status: 'standalone', message: 'Direct LLM mode — configure API URL in Settings to connect' };
+-                        window.T3MP3STShell.updateReadiness(standalone);
+-                        return standalone;
++                        const connecting = { status: 'connecting', message: 'Waiting for the backend at ' + this.baseUrl };
++                        window.T3MP3STShell.updateReadiness(connecting);
++                        setTimeout(() => this.checkHealth(), 4000);
++                        return connecting;
+                     }
+ 
+                     // Update UI indicator
+diff --git a/src/agent/local-agents.ts b/src/agent/local-agents.ts
+index 3b4f7d6..b14bb92 100644
+--- a/src/agent/local-agents.ts
++++ b/src/agent/local-agents.ts
+@@ -208,7 +208,7 @@ export function hermesYoloEnabled(): boolean {
+ /** OpenCode remains a planning backbone; Arsenal owns every executable tool action. */
+ function agentChildEnv(id: string): NodeJS.ProcessEnv {
+   const env = childEnv();
+-  if (id === 'opencode') env.OPENCODE_PERMISSION = JSON.stringify({ '*': 'deny' });
++  if (id === 'opencode') env.OPENCODE_PERMISSION = JSON.stringify({ bash: 'deny', edit: 'deny', write: 'deny', patch: 'deny', webfetch: 'deny', task: 'deny' });
+   return env;
+ }
+ 
+diff --git a/src/config/index.ts b/src/config/index.ts
+index ab7cdb4..863899b 100755
+--- a/src/config/index.ts
++++ b/src/config/index.ts
+@@ -704,6 +704,39 @@ export const AVAILABLE_MODELS: Record<LLMProvider, ModelInfo[]> = {
+       maxOutput: 8192,
+       capabilities: ['reasoning', 'code', 'analysis', 'agents', 'local-cli'],
+     },
++    // OpenCode FREE-tier models (no key, run through the opencode CLI's --model flag).
++    {
++      id: 'opencode::opencode/space-bunny-free',
++      name: 'OpenCode · space-bunny (free)',
++      provider: 'LocalAgent',
++      contextWindow: 200000,
++      maxOutput: 8192,
++      capabilities: ['reasoning', 'code', 'analysis', 'agents', 'local-cli', 'free'],
++    },
++    {
++      id: 'opencode::opencode/mimo-v2.6-flash-free',
++      name: 'OpenCode · mimo-v2.6-flash (free)',
++      provider: 'LocalAgent',
++      contextWindow: 200000,
++      maxOutput: 8192,
++      capabilities: ['reasoning', 'code', 'analysis', 'agents', 'local-cli', 'free'],
++    },
++    {
++      id: 'opencode::opencode/glm-5.3-flash-free',
++      name: 'OpenCode · glm-5.3-flash (free)',
++      provider: 'LocalAgent',
++      contextWindow: 200000,
++      maxOutput: 8192,
++      capabilities: ['reasoning', 'code', 'analysis', 'agents', 'local-cli', 'free'],
++    },
++    {
++      id: 'opencode::opencode/deepseek-v4.1-flash-free',
++      name: 'OpenCode · deepseek-v4.1-flash (free)',
++      provider: 'LocalAgent',
++      contextWindow: 200000,
++      maxOutput: 8192,
++      capabilities: ['reasoning', 'code', 'analysis', 'agents', 'local-cli', 'free'],
++    },
+     {
+       id: 'omp',
+       name: 'Oh My Pi (local CLI)',
+@@ -1041,7 +1074,7 @@ class ConfigManager {
+         // (Claude Code / Codex / Hermes / OpenCode / Oh My Pi), each using its own login — no API key or base
+         // URL. The chosen agent id travels in `model`, optionally with the selected
+         // underlying model after "::" (for example "claude::opus").
+-        actualModel = model || 'claude';
++        actualModel = model || this.config.get('defaultModel') || 'opencode';
+         break;
+       case 'mock':
+         actualModel = 'mock-model';
+diff --git a/src/server.ts b/src/server.ts
+index e9fbec0..c13dbbc 100755
+--- a/src/server.ts
++++ b/src/server.ts
+@@ -7000,7 +7000,7 @@ function resolveGeneralLLMConfig(provider: string | undefined, model: string | u
+   if (selectedProvider === 'local-agent') {
+     return {
+       provider: 'local-agent' as any,
+-      model: model || 'codex',
++      model: model || (defaultConfig.provider === 'local-agent' ? defaultConfig.model : 'codex'),
+       maxTokens: 8192,
+       temperature: 0.4,
+       timeout: readGeneralTimeoutEnv()
+@@ -8147,7 +8147,11 @@ app.get('/api/agents/local/status', async (req: Request, res: Response): Promise
+ // matches the exact '/' path and never shadows the /api/* routes above.
+ app.get('/', (_req: Request, res: Response) => res.redirect('/ui/'));
+ 
+-app.use('/ui', express.static('docs'));
++app.use('/ui', express.static('docs', {
++  setHeaders: (res, filePath) => {
++    if (/\.(html|js)$/.test(filePath)) res.setHeader('Cache-Control', 'no-store, must-revalidate');
++  },
++}));
+ 
+ // =============================================================================
+ // ERROR HANDLING
